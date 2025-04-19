@@ -7,10 +7,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <string.h>
 
 /*** defines ***/
 
 #define CTRL_KEY(k) ((k) & 0x1f)
+#define ABUF_INIT {NULL, 0}
 
 /*** data ***/
 
@@ -57,16 +59,51 @@ char editorReadKey() {
     return c;
 }
 
-int getWindowSize(int *rows, int *cols) {
-    struct winsize ws;
-    
-    if (ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        return -1;
-    } else {
-        *cols = ws.ws_col;
-        *rows = ws.ws_row;
-        return 0;
+int getCursorPosition(int *rows, int *cols) {
+    char buf[32];
+    unsigned int i = 0;
+
+    if (write(STDIN_FILENO, "\x1b[6n", 4) != 4) return -1;
+    while ( i < sizeof(buf) - 1) {
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if (buf[i] == 'R') break;
+        i++;
     }
+
+    if (buf[0] != '\x1b' || buf[1] != '[') return -1;
+    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
+    return 0;
+}
+
+int getWindowSize(int *rows, int *cols) {
+  struct winsize ws;
+  if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+      if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
+      return getCursorPosition(rows, cols);
+  } else {
+      *cols = ws.ws_col;
+      *rows = ws.ws_row;
+      return 0;
+  }
+}
+
+/*** append buffer ***/
+
+struct abuf {
+    char *b;
+    int len;
+}
+
+void abApend(struct abuf *ab, const char *s, int len) {
+    char *new = realloc(ab->b, ab->len + len);
+    if (new == NULL) return;
+    memcpy(&new[ab->len], s, len);
+    ab->b = new;
+    ab->len += len;
+}
+
+void abFree(struct abuf *ab) {
+    free(ab->b);
 }
 
 /*** output ***/
@@ -75,6 +112,9 @@ void editorDrawRows() {
     int y;
     for (y = 0; y < E.screenrows; y++) {
         write(STDIN_FILENO, "~\r\n", 3);
+        if (y < E.screenrows - 1) {
+            write(STDIN_FILENO, "\r\n", 2);
+        }
     } 
 }
 
